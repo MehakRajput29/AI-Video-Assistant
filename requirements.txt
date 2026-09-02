@@ -47,4 +47,5 @@ pydub
 yt-dlp
 youtube-transcript-api
 audioop-lts
-
+langchain-chroma
+chromadb
