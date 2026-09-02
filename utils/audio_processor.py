@@ -2,7 +2,8 @@ import os
 import re
 import yt_dlp
 from pydub import AudioSegment
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from gtts import gTTS
+from youtube_transcript_api import YouTubeTranscriptApi
 
 DOWNLOAD_DIR = 'downloades'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -18,7 +19,7 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
     languages = ['en', 'en-US', 'hi']
     transcript_list = None
 
-    # Strategy 1: Modern object instance call (.fetch) without invalid arguments
+    # Strategy 1: Modern object instance call (.fetch)
     try:
         api = YouTubeTranscriptApi()
         if hasattr(api, "fetch"):
@@ -33,7 +34,7 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
     except Exception:
         pass
 
-    # Strategy 2: Class method with cookies parameter (string path)
+    # Strategy 2: Class method with cookies parameter
     if transcript_list is None and os.path.exists(cookie_path):
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages, cookies=cookie_path)
@@ -45,13 +46,31 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
         try:
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
         except Exception:
-            # Final attempt without language filters
             transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
 
     if transcript_list:
         return " ".join([item['text'] for item in transcript_list])
 
     raise RuntimeError("Failed to retrieve transcript using any available YouTubeTranscriptApi method signature.")
+
+def convert_text_to_wav(text: str, video_id: str) -> str:
+    """Convert extracted transcript text into a standard WAV audio file using gTTS."""
+    mp3_path = os.path.join(DOWNLOAD_DIR, f"{video_id}_transcript.mp3")
+    wav_path = os.path.join(DOWNLOAD_DIR, f"{video_id}_transcript.wav")
+
+    # Generate synthesized speech from transcript text
+    tts = gTTS(text=text[:3000], lang='en') # Truncated to first 3000 chars for processing efficiency
+    tts.save(mp3_path)
+
+    # Convert generated MP3 into standard 16kHz WAV format for Whisper/audio pipelines
+    sound = AudioSegment.from_mp3(mp3_path)
+    sound = sound.set_channels(1).set_frame_rate(16000)
+    sound.export(wav_path, format="wav")
+
+    if os.path.exists(mp3_path):
+        os.remove(mp3_path)
+
+    return wav_path
 
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
@@ -104,7 +123,6 @@ def download_youtube_audio(url: str) -> str:
         print(f"yt-dlp failed ({e}). Attempting transcript extraction fallback for ID: {video_id}")
         raise RuntimeError(f"DRM_OR_DOWNLOAD_FAILED:{video_id}")
 
-
 def convert_to_wav(input_path: str) -> str:
     """Convert any audio/video file to WAV format using pydub."""
     if not os.path.exists(input_path):
@@ -119,7 +137,6 @@ def convert_to_wav(input_path: str) -> str:
     audio = audio.set_channels(1).set_frame_rate(16000)
     audio.export(output_path, format="wav")
     return output_path
-
 
 def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
     """Chunk WAV file into segments."""
@@ -145,23 +162,23 @@ def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
 
     return chunks
 
-
 def process_input(source: str):
     if source.startswith("http://") or source.startswith("https://"):
         print("Detected YouTube URL. Downloading audio...")
         try:
             wav_path = download_youtube_audio(source)
-            print("Chunking audio...")
-            return chunk_audio(wav_path)
         except RuntimeError as err:
             if "DRM_OR_DOWNLOAD_FAILED" in str(err):
                 video_id = str(err).split(":")[-1]
                 print(f"Fetching transcripts via fallback for video ID: {video_id}...")
                 transcript_text = fetch_youtube_transcript_text(video_id)
-                return transcript_text
+                # Convert the transcript text into an audio file so pydub/ffmpeg can process it seamlessly
+                wav_path = convert_text_to_wav(transcript_text, video_id)
             else:
                 raise err
     else:
         print("Detected local file. Converting to WAV...")
         wav_path = convert_to_wav(source)
-        return chunk_audio(wav_path)
+
+    print("Chunking audio...")
+    return chunk_audio(wav_path)
