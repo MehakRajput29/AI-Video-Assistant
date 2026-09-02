@@ -17,19 +17,20 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
     cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
 
     try:
-        api = YouTubeTranscriptApi()
+        # Pass cookie_path directly to constructor if file exists
+        if os.path.exists(cookie_path):
+            api = YouTubeTranscriptApi(cookie_path=cookie_path)
+        else:
+            api = YouTubeTranscriptApi()
 
+        # Check instance method .fetch()
         if hasattr(api, "fetch"):
-            # Corrected argument name to cookie_path
-            if os.path.exists(cookie_path):
-                fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'], cookie_path=cookie_path)
-            else:
-                fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
-
+            fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
             if isinstance(fetched_transcript, list):
                 return " ".join([item['text'] for item in fetched_transcript])
             return " ".join([snippet.text for snippet in fetched_transcript])
 
+        # Legacy static fallback
         elif hasattr(YouTubeTranscriptApi, "get_transcript"):
             if os.path.exists(cookie_path):
                 transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'], cookies=cookie_path)
