@@ -13,20 +13,25 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript text directly via youtube_transcript_api."""
+    """Fallback method: Fetch transcript text directly via youtube_transcript_api using cookies."""
+    cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
+
     try:
-        # Compatibility handling for newer and legacy versions of youtube_transcript_api
-        api = YouTubeTranscriptApi()
-        if hasattr(api, "fetch"):
-            fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
-            if isinstance(fetched_transcript, list):
-                return " ".join([item['text'] for item in fetched_transcript])
-            return " ".join([snippet.text for snippet in fetched_transcript])
-        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
-            return " ".join([item['text'] for item in transcript_list])
+        # Pass cookies if available to bypass datacenter IP blocks
+        if os.path.exists(cookie_path):
+            transcript_list = YouTubeTranscriptApi.get_transcript(
+                video_id,
+                languages=['en', 'en-US', 'hi'],
+                cookies=cookie_path
+            )
         else:
-            raise AttributeError("YouTubeTranscriptApi missing expected transcript methods.")
+            transcript_list = YouTubeTranscriptApi.get_transcript(
+                video_id,
+                languages=['en', 'en-US', 'hi']
+            )
+
+        return " ".join([item['text'] for item in transcript_list])
+
     except Exception as e:
         raise RuntimeError(f"Transcript extraction failed: {e}")
 
