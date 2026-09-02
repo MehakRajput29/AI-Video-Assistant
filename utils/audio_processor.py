@@ -13,36 +13,45 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript text directly via youtube_transcript_api using cookies."""
+    """Fallback method: Fetch transcript text directly via youtube_transcript_api safely across versions."""
     cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
+    languages = ['en', 'en-US', 'hi']
+    transcript_list = None
 
+    # Strategy 1: Modern object instance call (.fetch) without invalid arguments
     try:
-        # Pass cookie_path directly to constructor if file exists
-        if os.path.exists(cookie_path):
-            api = YouTubeTranscriptApi(cookie_path=cookie_path)
-        else:
-            api = YouTubeTranscriptApi()
-
-        # Check instance method .fetch()
+        api = YouTubeTranscriptApi()
         if hasattr(api, "fetch"):
-            fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
-            if isinstance(fetched_transcript, list):
-                return " ".join([item['text'] for item in fetched_transcript])
-            return " ".join([snippet.text for snippet in fetched_transcript])
+            try:
+                fetched = api.fetch(video_id, languages=languages)
+            except TypeError:
+                fetched = api.fetch(video_id)
 
-        # Legacy static fallback
-        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
-            if os.path.exists(cookie_path):
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'], cookies=cookie_path)
-            else:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
-            return " ".join([item['text'] for item in transcript_list])
+            if isinstance(fetched, list):
+                return " ".join([item['text'] for item in fetched])
+            return " ".join([snippet.text for snippet in fetched])
+    except Exception:
+        pass
 
-        else:
-            raise AttributeError("YouTubeTranscriptApi missing required fetching methods.")
+    # Strategy 2: Class method with cookies parameter (string path)
+    if transcript_list is None and os.path.exists(cookie_path):
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages, cookies=cookie_path)
+        except Exception:
+            pass
 
-    except Exception as e:
-        raise RuntimeError(f"Transcript extraction failed: {e}")
+    # Strategy 3: Class method without cookies parameter
+    if transcript_list is None:
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
+        except Exception:
+            # Final attempt without language filters
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+
+    if transcript_list:
+        return " ".join([item['text'] for item in transcript_list])
+
+    raise RuntimeError("Failed to retrieve transcript using any available YouTubeTranscriptApi method signature.")
 
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
