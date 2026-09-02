@@ -2,20 +2,27 @@ import os
 import re
 import yt_dlp
 from pydub import AudioSegment
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 
 DOWNLOAD_DIR = 'downloades'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def extract_video_id(url: str) -> str:
     """Extract YouTube Video ID from various URL formats."""
-    match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
+    match = re.search(r"(?:v=|\/|vi=|\/v\/|e\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else url
+
+def fetch_youtube_transcript_text(video_id: str) -> str:
+    """Fallback method: Fetch transcript text directly via youtube_transcript_api if audio download is blocked or DRM protected."""
+    try:
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
+        full_text = " ".join([item['text'] for item in transcript_list])
+        return full_text
+    except Exception as e:
+        raise RuntimeError(f"Transcript extraction failed: {e}")
 
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
-
-    # Path to cookies.txt located in the root of your project repository
     cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
 
     ydl_opts = {
@@ -34,7 +41,6 @@ def download_youtube_audio(url: str) -> str:
         "retries": 10,
         "fragment_retries": 10,
         "nocheckcertificate": True,
-        # Cycle through multiple YouTube player clients
         "extractor_args": {
             "youtube": {
                 "player_client": ["ios", "mweb", "android", "web"]
@@ -42,12 +48,9 @@ def download_youtube_audio(url: str) -> str:
         },
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
         }
     }
 
-    # Automatically attach cookies.txt if present in the repo root
     if os.path.exists(cookie_path):
         ydl_opts["cookiefile"] = cookie_path
 
@@ -57,15 +60,16 @@ def download_youtube_audio(url: str) -> str:
             video_id = info.get("id")
             final_filename = os.path.join(DOWNLOAD_DIR, f"{video_id}.wav")
 
-            # Validate downloaded audio file
             if not os.path.exists(final_filename) or os.path.getsize(final_filename) == 0:
-                raise ValueError("Downloaded audio file is missing or empty (0 bytes).")
+                raise ValueError("Downloaded audio file is missing or empty.")
 
             return final_filename
 
     except Exception as e:
-        print(f"yt-dlp audio download failed: {e}")
-        raise RuntimeError(f"Failed to download audio from YouTube: {e}")
+        # Catch DRM protected or 403 blocks and inform the pipeline
+        video_id = extract_video_id(url)
+        print(f"yt-dlp failed ({e}). Attempting transcript extraction fallback for ID: {video_id}")
+        raise RuntimeError(f"DRM_OR_DOWNLOAD_FAILED:{video_id}")
 
 
 def convert_to_wav(input_path: str) -> str:
@@ -79,17 +83,16 @@ def convert_to_wav(input_path: str) -> str:
     if len(audio) == 0:
         raise ValueError("Source media file contains no audio tracks.")
 
-    audio = audio.set_channels(1).set_frame_rate(16000)  # 16kHz mono
+    audio = audio.set_channels(1).set_frame_rate(16000)
     audio.export(output_path, format="wav")
     return output_path
 
 
 def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
-    """Chunk WAV file into segments, strictly ignoring zero-length audio."""
+    """Chunk WAV file into segments."""
     audio = AudioSegment.from_wav(wav_path)
 
-    # Reject empty audio files before processing
-    if len(audio) < 1000:  # less than 1 second
+    if len(audio) < 1000:
         raise ValueError("Extracted audio duration is too short or corrupted.")
 
     chunk_ms = chunk_minutes * 60 * 1000
@@ -97,8 +100,6 @@ def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
 
     for i, start in enumerate(range(0, len(audio), chunk_ms)):
         chunk = audio[start : start + chunk_ms]
-
-        # Skip chunks shorter than half a second
         if len(chunk) < 500:
             continue
 
@@ -112,15 +113,22 @@ def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
     return chunks
 
 
-def process_input(source: str) -> list:
+def process_input(source: str):
     if source.startswith("http://") or source.startswith("https://"):
         print("Detected YouTube URL. Downloading audio...")
-        wav_path = download_youtube_audio(source)
+        try:
+            wav_path = download_youtube_audio(source)
+            print("Chunking audio...")
+            return chunk_audio(wav_path)
+        except RuntimeError as err:
+            if "DRM_OR_DOWNLOAD_FAILED" in str(err):
+                video_id = str(err).split(":")[-1]
+                print(f"Fetching transcripts via fallback for video ID: {video_id}...")
+                transcript_text = fetch_youtube_transcript_text(video_id)
+                return transcript_text
+            else:
+                raise err
     else:
         print("Detected local file. Converting to WAV...")
         wav_path = convert_to_wav(source)
-
-    print("Chunking audio...")
-    chunks = chunk_audio(wav_path)
-    print(f"Audio ready — {len(chunks)} chunk(s) created.")
-    return chunks
+        return chunk_audio(wav_path)
