@@ -13,11 +13,20 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript text directly via youtube_transcript_api if audio download is blocked or DRM protected."""
+    """Fallback method: Fetch transcript text directly via youtube_transcript_api."""
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
-        full_text = " ".join([item['text'] for item in transcript_list])
-        return full_text
+        # Compatibility handling for newer and legacy versions of youtube_transcript_api
+        api = YouTubeTranscriptApi()
+        if hasattr(api, "fetch"):
+            fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
+            if isinstance(fetched_transcript, list):
+                return " ".join([item['text'] for item in fetched_transcript])
+            return " ".join([snippet.text for snippet in fetched_transcript])
+        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
+            return " ".join([item['text'] for item in transcript_list])
+        else:
+            raise AttributeError("YouTubeTranscriptApi missing expected transcript methods.")
     except Exception as e:
         raise RuntimeError(f"Transcript extraction failed: {e}")
 
@@ -48,6 +57,8 @@ def download_youtube_audio(url: str) -> str:
         },
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
         }
     }
 
@@ -66,7 +77,6 @@ def download_youtube_audio(url: str) -> str:
             return final_filename
 
     except Exception as e:
-        # Catch DRM protected or 403 blocks and inform the pipeline
         video_id = extract_video_id(url)
         print(f"yt-dlp failed ({e}). Attempting transcript extraction fallback for ID: {video_id}")
         raise RuntimeError(f"DRM_OR_DOWNLOAD_FAILED:{video_id}")
