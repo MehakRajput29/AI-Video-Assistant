@@ -17,20 +17,29 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
     cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
 
     try:
-        # Pass cookies if available to bypass datacenter IP blocks
-        if os.path.exists(cookie_path):
-            transcript_list = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                languages=['en', 'en-US', 'hi'],
-                cookies=cookie_path
-            )
-        else:
-            transcript_list = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                languages=['en', 'en-US', 'hi']
-            )
+        # Instantiate the API object for modern library versions
+        api = YouTubeTranscriptApi()
 
-        return " ".join([item['text'] for item in transcript_list])
+        if hasattr(api, "fetch"):
+            if os.path.exists(cookie_path):
+                fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'], cookies=cookie_path)
+            else:
+                fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
+
+            if isinstance(fetched_transcript, list):
+                return " ".join([item['text'] for item in fetched_transcript])
+            return " ".join([snippet.text for snippet in fetched_transcript])
+
+        # Legacy static fallback
+        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
+            if os.path.exists(cookie_path):
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'], cookies=cookie_path)
+            else:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
+            return " ".join([item['text'] for item in transcript_list])
+
+        else:
+            raise AttributeError("YouTubeTranscriptApi missing required fetching methods.")
 
     except Exception as e:
         raise RuntimeError(f"Transcript extraction failed: {e}")
