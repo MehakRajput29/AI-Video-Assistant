@@ -15,6 +15,9 @@ def extract_video_id(url: str) -> str:
 def download_youtube_audio(url: str) -> str:
     output_template = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
 
+    # Path to cookies.txt located in the root of your project repository
+    cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
+
     ydl_opts = {
         "format": "m4a/bestaudio/best",
         "outtmpl": output_template,
@@ -31,10 +34,10 @@ def download_youtube_audio(url: str) -> str:
         "retries": 10,
         "fragment_retries": 10,
         "nocheckcertificate": True,
-        # Force mobile iOS client & browser user-agents to bypass cloud IP blocks
+        # Cycle through multiple YouTube player clients
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android", "mweb"]
+                "player_client": ["ios", "mweb", "android", "web"]
             }
         },
         "http_headers": {
@@ -44,13 +47,17 @@ def download_youtube_audio(url: str) -> str:
         }
     }
 
+    # Automatically attach cookies.txt if present in the repo root
+    if os.path.exists(cookie_path):
+        ydl_opts["cookiefile"] = cookie_path
+
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             video_id = info.get("id")
             final_filename = os.path.join(DOWNLOAD_DIR, f"{video_id}.wav")
 
-            # Validate that the downloaded file exists and is not empty (0 bytes)
+            # Validate downloaded audio file
             if not os.path.exists(final_filename) or os.path.getsize(final_filename) == 0:
                 raise ValueError("Downloaded audio file is missing or empty (0 bytes).")
 
@@ -81,7 +88,7 @@ def chunk_audio(wav_path: str, chunk_minutes: int = 10) -> list:
     """Chunk WAV file into segments, strictly ignoring zero-length audio."""
     audio = AudioSegment.from_wav(wav_path)
 
-    # Reject empty audio files before processing to prevent downstream PyTorch shape errors
+    # Reject empty audio files before processing
     if len(audio) < 1000:  # less than 1 second
         raise ValueError("Extracted audio duration is too short or corrupted.")
 
