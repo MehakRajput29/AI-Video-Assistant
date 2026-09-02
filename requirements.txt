@@ -46,4 +46,5 @@ groq
 pydub
 yt-dlp
 youtube-transcript-api
+audioop-lts
 
