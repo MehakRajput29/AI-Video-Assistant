@@ -1,4 +1,5 @@
 import os
+import streamlit as st
 from langchain_mistralai import ChatMistralAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -7,9 +8,10 @@ from core.vector_store import build_vector_store, load_vector_store, get_retriev
 
 
 def get_llm():
+    api_key = os.getenv("MISTRAL_API_KEY") or getattr(st, "secrets", {}).get("MISTRAL_API_KEY")
     return ChatMistralAI(
         model="mistral-small-latest",
-        mistral_api_key=os.getenv("MISTRAL_API_KEY"),
+        mistral_api_key=api_key,
         temperature=0.3,
     )
 
