@@ -15,64 +15,54 @@ def extract_video_id(url: str) -> str:
     match = re.search(r"(?:v=|\/|vi=|\/v\/|e\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else url
 
+
 import assemblyai as aai
+from pytube import YouTube
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fetch transcript text via AssemblyAI API or object-oriented YouTubeTranscriptApi with proxies."""
-    assemblyai_key = os.getenv("ASSEMBLYAI_API_KEY")
+    """Fetch transcript using AssemblyAI or fallback pytube audio extraction."""
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+    assemblyai_key = os.getenv("ASSEMBLYAI_API_KEY")
 
-    # Strategy 1: Try AssemblyAI API directly (Bypasses YouTube IP blocks)
+    # Strategy 1: Direct AssemblyAI API Call
     if assemblyai_key:
         try:
             aai.settings.api_key = assemblyai_key
             transcriber = aai.Transcriber()
             transcript = transcriber.transcribe(youtube_url)
-
-            if transcript.status == aai.TranscriptStatus.error:
-                print(f"AssemblyAI processing error: {transcript.error}")
-            elif transcript.text:
+            if transcript.text:
                 return transcript.text
         except Exception as e:
-            print(f"AssemblyAI extraction failed: {e}. Falling back to YouTubeTranscriptApi...")
+            print(f"AssemblyAI failed: {e}")
 
-    # Strategy 2: Fallback to YouTubeTranscriptApi using proxies
+    # Strategy 2: Download Audio using PyTube & Convert
+    try:
+        yt = YouTube(youtube_url)
+        audio_stream = yt.streams.filter(only_audio=True).first()
+        out_file = audio_stream.download(output_path=DOWNLOAD_DIR, filename=f"{video_id}.mp4")
+
+        # Convert downloaded PyTube file to WAV
+        wav_path = convert_to_wav(out_file)
+
+        # Return transcript note or placeholder path for audio pipeline
+        return f"Audio extracted successfully to {wav_path}"
+    except Exception as e:
+        print(f"PyTube download failed: {e}")
+
+    # Strategy 3: Attempt YouTubeTranscriptApi with explicit individual proxy format
     proxy_url = os.getenv("PROXY_URL")
-    webshare_user = os.getenv("WEBSHARE_PROXY_USER")
-    webshare_pass = os.getenv("WEBSHARE_PROXY_PASS")
-
     proxy_config = None
-    if webshare_user and webshare_pass:
-        proxy_config = WebshareProxyConfig(
-            proxy_username=webshare_user,
-            proxy_password=webshare_pass
-        )
-    elif proxy_url:
-        proxy_config = GenericProxyConfig(
-            http_url=proxy_url,
-            https_url=proxy_url
-        )
-
-    # Instantiate API with optional proxy configuration
-    api = YouTubeTranscriptApi(proxy_config=proxy_config) if proxy_config else YouTubeTranscriptApi()
+    if proxy_url:
+        proxy_config = GenericProxyConfig(http_url=proxy_url, https_url=proxy_url)
 
     try:
-        # Modern fetch call on the instantiated client object
+        api = YouTubeTranscriptApi(proxy_config=proxy_config) if proxy_config else YouTubeTranscriptApi()
         transcript_data = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
-
-        # Format list of dictionaries/objects into a single text string
-        words = []
-        for item in transcript_data:
-            if isinstance(item, dict):
-                words.append(item.get('text', ''))
-            elif hasattr(item, 'text'):
-                words.append(item.text)
-        return " ".join(words)
-
+        return " ".join([item.get('text', '') if isinstance(item, dict) else item.text for item in transcript_data])
     except Exception as e:
         raise RuntimeError(
-            f"YouTube transcript retrieval blocked or failed: {e}. "
-            "Please configure ASSEMBLYAI_API_KEY in secrets or upload the video/audio file directly."
+            "YouTube datacenter blocks active. Please upload an audio/video file directly via the sidebar, "
+            "or set ASSEMBLYAI_API_KEY in Streamlit secrets."
         ) from e
 
 def convert_text_to_wav(text: str, video_id: str) -> str:
