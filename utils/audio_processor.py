@@ -15,8 +15,28 @@ def extract_video_id(url: str) -> str:
     match = re.search(r"(?:v=|\/|vi=|\/v\/|e\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else url
 
+import assemblyai as aai
+
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript text using object-oriented YouTubeTranscriptApi."""
+    """Fetch transcript text via AssemblyAI API or object-oriented YouTubeTranscriptApi with proxies."""
+    assemblyai_key = os.getenv("ASSEMBLYAI_API_KEY")
+    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    # Strategy 1: Try AssemblyAI API directly (Bypasses YouTube IP blocks)
+    if assemblyai_key:
+        try:
+            aai.settings.api_key = assemblyai_key
+            transcriber = aai.Transcriber()
+            transcript = transcriber.transcribe(youtube_url)
+
+            if transcript.status == aai.TranscriptStatus.error:
+                print(f"AssemblyAI processing error: {transcript.error}")
+            elif transcript.text:
+                return transcript.text
+        except Exception as e:
+            print(f"AssemblyAI extraction failed: {e}. Falling back to YouTubeTranscriptApi...")
+
+    # Strategy 2: Fallback to YouTubeTranscriptApi using proxies
     proxy_url = os.getenv("PROXY_URL")
     webshare_user = os.getenv("WEBSHARE_PROXY_USER")
     webshare_pass = os.getenv("WEBSHARE_PROXY_PASS")
@@ -52,7 +72,7 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
     except Exception as e:
         raise RuntimeError(
             f"YouTube transcript retrieval blocked or failed: {e}. "
-            "Please upload the video/audio file directly or configure proxies."
+            "Please configure ASSEMBLYAI_API_KEY in secrets or upload the video/audio file directly."
         ) from e
 
 def convert_text_to_wav(text: str, video_id: str) -> str:

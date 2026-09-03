@@ -50,5 +50,6 @@ audioop-lts
 langchain-chroma
 chromadb
 gTTS
+assemblyai
 
 
