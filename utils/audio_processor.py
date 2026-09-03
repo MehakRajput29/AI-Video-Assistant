@@ -1,5 +1,6 @@
 import os
 import re
+import tempfile
 import requests
 import yt_dlp
 from pydub import AudioSegment
@@ -17,7 +18,7 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fetch transcript using AssemblyAI directly or fall back to YouTubeTranscriptApi."""
+    """Fetch transcript using AssemblyAI (via yt-dlp audio extraction) or fall back to YouTubeTranscriptApi."""
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
 
     # Check both os.getenv and st.secrets for AssemblyAI key
@@ -29,18 +30,43 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
         except Exception:
             pass
 
-    # Strategy 1: Direct AssemblyAI API Call (Bypasses YouTube datacenter IP blocks)
+    # Strategy 1: Extract Audio via yt-dlp & Transcribe with AssemblyAI
     if assemblyai_key:
         try:
             print("Attempting transcript retrieval via AssemblyAI...")
             aai.settings.api_key = assemblyai_key
-            transcriber = aai.Transcriber()
-            transcript = transcriber.transcribe(youtube_url)
 
-            if transcript.status == aai.TranscriptStatus.error:
-                print(f"AssemblyAI error details: {transcript.error}")
-            elif transcript.text:
-                return transcript.text
+            with tempfile.TemporaryDirectory() as temp_dir:
+                audio_path = os.path.join(temp_dir, "yt_audio.mp3")
+                ydl_opts = {
+                    'format': 'm4a/bestaudio/best',
+                    'outtmpl': audio_path,
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    'quiet': True,
+                    'no_warnings': True,
+                }
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([youtube_url])
+
+                # Handle potential extension resolution by yt-dlp
+                if not os.path.exists(audio_path):
+                    possible_files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir)]
+                    if possible_files:
+                        audio_path = possible_files[0]
+
+                transcriber = aai.Transcriber()
+                transcript = transcriber.transcribe(audio_path)
+
+                if transcript.status == aai.TranscriptStatus.error:
+                    print(f"AssemblyAI error details: {transcript.error}")
+                elif transcript.text:
+                    return transcript.text
+
         except Exception as e:
             print(f"AssemblyAI processing failed ({e}). Trying YouTubeTranscriptApi...")
 
