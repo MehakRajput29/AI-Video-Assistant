@@ -17,9 +17,17 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript using AssemblyAI API or YouTubeTranscriptApi with proxies."""
+    """Fetch transcript using AssemblyAI directly or fall back to YouTubeTranscriptApi."""
     youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+
+    # Check both os.getenv and st.secrets for AssemblyAI key
     assemblyai_key = os.getenv("ASSEMBLYAI_API_KEY")
+    if not assemblyai_key:
+        try:
+            import streamlit as st
+            assemblyai_key = st.secrets.get("ASSEMBLYAI_API_KEY")
+        except Exception:
+            pass
 
     # Strategy 1: Direct AssemblyAI API Call (Bypasses YouTube datacenter IP blocks)
     if assemblyai_key:
@@ -30,14 +38,14 @@ def fetch_youtube_transcript_text(video_id: str) -> str:
             transcript = transcriber.transcribe(youtube_url)
 
             if transcript.status == aai.TranscriptStatus.error:
-                print(f"AssemblyAI error: {transcript.error}")
+                print(f"AssemblyAI error details: {transcript.error}")
             elif transcript.text:
                 return transcript.text
         except Exception as e:
             print(f"AssemblyAI processing failed ({e}). Trying YouTubeTranscriptApi...")
 
     # Strategy 2: Attempt YouTubeTranscriptApi with proxy support
-    proxy_url = os.getenv("PROXY_URL")
+    proxy_url = os.getenv("PROXY_URL") or os.getenv("WEB_SHARE_PROXY_URL")
     webshare_user = os.getenv("WEBSHARE_PROXY_USER")
     webshare_pass = os.getenv("WEBSHARE_PROXY_PASS")
 
