@@ -45,9 +45,10 @@ requests>=2.32.0
 groq
 pydub
 yt-dlp
-youtube-transcript-api
+youtube-transcript-api>=0.6.2
 audioop-lts
 langchain-chroma
 chromadb
 gTTS
+
 

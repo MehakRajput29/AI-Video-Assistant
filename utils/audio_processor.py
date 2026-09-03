@@ -14,44 +14,22 @@ def extract_video_id(url: str) -> str:
     return match.group(1) if match else url
 
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript text directly via youtube_transcript_api safely across versions."""
-    cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
-    languages = ['en', 'en-US', 'hi']
-    transcript_list = None
-
-    # Strategy 1: Modern object instance call (.fetch)
+    """Fallback method: Fetch transcript text directly via youtube_transcript_api using modern syntax."""
     try:
+        # Instantiate the transcript API object
         api = YouTubeTranscriptApi()
-        if hasattr(api, "fetch"):
-            try:
-                fetched = api.fetch(video_id, languages=languages)
-            except TypeError:
-                fetched = api.fetch(video_id)
 
-            if isinstance(fetched, list):
-                return " ".join([item['text'] for item in fetched])
-            return " ".join([snippet.text for snippet in fetched])
-    except Exception:
-        pass
+        # Use instance method .fetch() for current library versions
+        fetched_transcript = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
 
-    # Strategy 2: Class method with cookies parameter
-    if transcript_list is None and os.path.exists(cookie_path):
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages, cookies=cookie_path)
-        except Exception:
-            pass
+        # Format list output into a single string
+        if isinstance(fetched_transcript, list):
+            return " ".join([item['text'] for item in fetched_transcript])
 
-    # Strategy 3: Class method without cookies parameter
-    if transcript_list is None:
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=languages)
-        except Exception:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
+        return " ".join([snippet.text for snippet in fetched_transcript])
 
-    if transcript_list:
-        return " ".join([item['text'] for item in transcript_list])
-
-    raise RuntimeError("Failed to retrieve transcript using any available YouTubeTranscriptApi method signature.")
+    except Exception as e:
+        raise RuntimeError(f"Transcript extraction failed: {e}")
 
 def convert_text_to_wav(text: str, video_id: str) -> str:
     """Convert extracted transcript text into a standard WAV audio file using gTTS."""
