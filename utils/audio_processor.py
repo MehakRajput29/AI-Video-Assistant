@@ -1,9 +1,11 @@
 import os
 import re
+import requests
 import yt_dlp
 from pydub import AudioSegment
 from gtts import gTTS
 from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.proxies import GenericProxyConfig, WebshareProxyConfig
 
 DOWNLOAD_DIR = 'downloades'
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
@@ -13,38 +15,44 @@ def extract_video_id(url: str) -> str:
     match = re.search(r"(?:v=|\/|vi=|\/v\/|e\/|embed\/|shorts\/)([0-9A-Za-z_-]{11})", url)
     return match.group(1) if match else url
 
-import requests
-
 def fetch_youtube_transcript_text(video_id: str) -> str:
-    """Fallback method: Fetch transcript directly bypassing standard IP blocks using requests session."""
-    cookie_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cookies.txt')
+    """Fallback method: Fetch transcript text using object-oriented YouTubeTranscriptApi."""
+    proxy_url = os.getenv("PROXY_URL")
+    webshare_user = os.getenv("WEBSHARE_PROXY_USER")
+    webshare_pass = os.getenv("WEBSHARE_PROXY_PASS")
 
-    # Configure custom HTTP session with mobile/browser headers
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
+    proxy_config = None
+    if webshare_user and webshare_pass:
+        proxy_config = WebshareProxyConfig(
+            proxy_username=webshare_user,
+            proxy_password=webshare_pass
+        )
+    elif proxy_url:
+        proxy_config = GenericProxyConfig(
+            http_url=proxy_url,
+            https_url=proxy_url
+        )
+
+    # Instantiate API with optional proxy configuration
+    api = YouTubeTranscriptApi(proxy_config=proxy_config) if proxy_config else YouTubeTranscriptApi()
 
     try:
-        # Pass custom session to YouTubeTranscriptApi
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(
-                video_id,
-                languages=['en', 'en-US', 'hi'],
-                http_cookies=open(cookie_path).read() if os.path.exists(cookie_path) else None
-            )
-        except TypeError:
-            # Fallback if http_cookies is unsupported in installed version
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'en-US', 'hi'])
+        # Modern fetch call on the instantiated client object
+        transcript_data = api.fetch(video_id, languages=['en', 'en-US', 'hi'])
 
-        return " ".join([item['text'] for item in transcript_list])
+        # Format list of dictionaries/objects into a single text string
+        words = []
+        for item in transcript_data:
+            if isinstance(item, dict):
+                words.append(item.get('text', ''))
+            elif hasattr(item, 'text'):
+                words.append(item.text)
+        return " ".join(words)
 
     except Exception as e:
-        # If API block persists, notify user to test regular video or local upload
         raise RuntimeError(
-            "YouTube is blocking the cloud server IP for this specific video. "
-            "Please try a standard non-DRM video or upload an audio/video file directly."
+            f"YouTube transcript retrieval blocked or failed: {e}. "
+            "Please upload the video/audio file directly or configure proxies."
         ) from e
 
 def convert_text_to_wav(text: str, video_id: str) -> str:
@@ -53,10 +61,10 @@ def convert_text_to_wav(text: str, video_id: str) -> str:
     wav_path = os.path.join(DOWNLOAD_DIR, f"{video_id}_transcript.wav")
 
     # Generate synthesized speech from transcript text
-    tts = gTTS(text=text[:3000], lang='en') # Truncated to first 3000 chars for processing efficiency
+    tts = gTTS(text=text[:3000], lang='en')
     tts.save(mp3_path)
 
-    # Convert generated MP3 into standard 16kHz WAV format for Whisper/audio pipelines
+    # Convert generated MP3 into standard 16kHz mono WAV for downstream processing
     sound = AudioSegment.from_mp3(mp3_path)
     sound = sound.set_channels(1).set_frame_rate(16000)
     sound.export(wav_path, format="wav")
@@ -166,7 +174,6 @@ def process_input(source: str):
                 video_id = str(err).split(":")[-1]
                 print(f"Fetching transcripts via fallback for video ID: {video_id}...")
                 transcript_text = fetch_youtube_transcript_text(video_id)
-                # Convert the transcript text into an audio file so pydub/ffmpeg can process it seamlessly
                 wav_path = convert_text_to_wav(transcript_text, video_id)
             else:
                 raise err
